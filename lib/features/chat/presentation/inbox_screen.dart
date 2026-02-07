@@ -12,51 +12,61 @@ class InboxScreen extends StatefulWidget {
 class _InboxScreenState extends State<InboxScreen> {
   bool _isLoading = true;
   List<dynamic> _requests = [];
+  final String _currentUserId = Supabase.instance.client.auth.currentUser!.id;
+  late RealtimeChannel _inboxChannel;
 
   @override
   void initState() {
     super.initState();
     _fetchRequests();
+    _setupInboxRealtime();
   }
 
+  // 1. IMPROVED REALTIME: Listens for ANY change (INSERT, UPDATE, DELETE)
+  void _setupInboxRealtime() {
+    _inboxChannel = Supabase.instance.client
+        .channel('public:chat_requests_inbox')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'chat_requests',
+          callback: (payload) {
+            debugPrint("Realtime Update Received: ${payload.toString()}");
+            _fetchRequests();
+          },
+        )
+        .subscribe();
+  }
+
+  // 2. ROBUST FETCH: Explicitly filters where YOU are the project owner
   Future<void> _fetchRequests() async {
-  final user = Supabase.instance.client.auth.currentUser;
-  if (user == null) return;
+    try {
+      final data = await Supabase.instance.client
+          .from('chat_requests')
+          .select('''
+            *,
+            ventures(title),
+            profiles!sender_id(full_name)
+          ''')
+          .eq('receiver_id', _currentUserId) // Ensures you only see requests sent TO you
+          .order('created_at', ascending: false);
 
-  try {
-    final data = await Supabase.instance.client
-        .from('chat_requests')
-        .select('''
-          *,
-          ventures(title),
-          profiles!sender_id(full_name) -- The !sender_id tells Supabase WHICH link to follow
-        ''')
-        .eq('receiver_id', user.id)
-        .order('created_at', ascending: false);
-
-    if (mounted) {
-      setState(() {
-        _requests = data as List<dynamic>;
-        _isLoading = false;
-      });
-    }
-  } catch (e) {
-    if (mounted) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e")),
-      );
+      if (mounted) {
+        setState(() {
+          _requests = data as List<dynamic>;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading inbox: $e");
+      if (mounted) setState(() => _isLoading = false);
     }
   }
-}
 
-  Future<void> _acceptRequest(String requestId) async {
-    await Supabase.instance.client
-        .from('chat_requests')
-        .update({'status': 'accepted'})
-        .eq('id', requestId);
-    
-    _fetchRequests(); // Refresh the list
+  @override
+  void dispose() {
+    Supabase.instance.client.removeChannel(_inboxChannel);
+    super.dispose();
   }
 
   @override
@@ -64,136 +74,91 @@ class _InboxScreenState extends State<InboxScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text("Inbox", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B3C73))),
+        title: const Text("Received Requests", 
+          style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B3C73))),
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1B3C73)),
-          onPressed: () => context.pop(),
-        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _requests.isEmpty
               ? _buildEmptyState()
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _requests.length,
-                  itemBuilder: (context, index) {
-                    final req = _requests[index];
-                    final isPending = req['status'] == 'pending';
-                    final senderName = req['profiles']?['full_name'] ?? "Someone";
-                    final ventureTitle = req['ventures']?['title'] ?? "a project";
+              : RefreshIndicator(
+                  onRefresh: _fetchRequests,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _requests.length,
+                    itemBuilder: (context, index) {
+                      final req = _requests[index];
+                      final senderName = req['profiles']?['full_name'] ?? "User";
+                      final ventureTitle = req['ventures']?['title'] ?? "Project";
+                      final bool isAccepted = req['status'] == 'accepted';
 
-                    return Card(
-                      // FIX: Changed .bottom to .only(bottom: 16)
-                      margin: const EdgeInsets.only(bottom: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16), 
-                        side: BorderSide(color: Colors.grey.shade100),
-                      ),
-                      elevation: 0,
-                      color: const Color(0xFFF8FAFC),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  senderName,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1B3C73)),
-                                ),
-                                _buildStatusBadge(req['status']),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              "Interested in: $ventureTitle", 
-                              style: const TextStyle(fontSize: 13, color: Colors.blueGrey),
-                            ),
-                            const Divider(height: 24),
-                            _buildAnswer("Expertise:", req['expertise'] ?? "Not provided"),
-                            const SizedBox(height: 12),
-                            _buildAnswer("Contribution:", req['contribution'] ?? "Not provided"),
-                            const SizedBox(height: 16),
-                            
-                            if (isPending)
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      onPressed: () => _acceptRequest(req['id']),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF1B3C73), 
-                                        foregroundColor: Colors.white, 
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                      ),
-                                      child: const Text("Accept & Chat"),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  TextButton(
-                                    onPressed: () {}, // Optional: Add reject logic later
-                                    child: const Text("Ignore", style: TextStyle(color: Colors.red)),
-                                  ),
-                                ],
-                              )
-                            else if (req['status'] == 'accepted')
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () {
-                                    context.push('/chat/${req['id']}/${req['ventures']['title']}');
-                                  },
-                                  icon: const Icon(Icons.chat_outlined),
-                                  label: const Text("Open Chat"),
-                                  style: OutlinedButton.styleFrom(
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                ),
-                              ),
-                          ],
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        color: const Color(0xFFF8FAFC),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: Colors.grey.shade100),
                         ),
-                      ),
-                    );
-                  },
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.all(16),
+                          title: Text("${ventureTitle}_$senderName", 
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(isAccepted ? "Tap to chat" : "New application - tap to view"),
+                          trailing: isAccepted 
+                              ? const Icon(Icons.chat, color: Color(0xFF1B3C73))
+                              : const Icon(Icons.notification_important, color: Colors.orange),
+                          onTap: () {
+                            if (isAccepted) {
+                              context.push('/chat/${req['id']}/$ventureTitle');
+                            } else {
+                              _showAcceptDialog(req['id'], senderName);
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
                 ),
     );
   }
 
-  Widget _buildEmptyState() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.mail_outline, size: 64, color: Colors.grey),
-          SizedBox(height: 16),
-          Text("No requests yet. Your future co-founders await!", style: TextStyle(color: Colors.grey)),
+  void _showAcceptDialog(String requestId, String name) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Request from $name"),
+        content: const Text("Would you like to accept this application and start a chat?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Review")),
+          ElevatedButton(
+            onPressed: () async {
+              await Supabase.instance.client
+                  .from('chat_requests')
+                  .update({'status': 'accepted'})
+                  .eq('id', requestId);
+              Navigator.pop(context);
+              _fetchRequests();
+            },
+            child: const Text("Accept"),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildAnswer(String label, String text) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
-        const SizedBox(height: 4),
-        Text(text, style: const TextStyle(fontSize: 14, color: Colors.black87)),
-      ],
-    );
-  }
-
-  Widget _buildStatusBadge(String status) {
-    final color = status == 'accepted' ? Colors.green : (status == 'pending' ? Colors.orange : Colors.grey);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-      child: Text(status.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.inbox_outlined, size: 64, color: Colors.grey),
+          const SizedBox(height: 16),
+          const Text("No incoming requests found.", style: TextStyle(color: Colors.grey)),
+          TextButton(onPressed: _fetchRequests, child: const Text("Refresh")),
+        ],
+      ),
     );
   }
 }

@@ -15,6 +15,7 @@ import '../../../features/ventures/presentation/my_ventures_screen.dart';
 import '../../../features/ventures/presentation/saved_ventures_screen.dart';
 import '../../../features/chat/presentation/inbox_screen.dart';
 import '../../../features/chat/presentation/chat_screen.dart';
+import '../../../features/home/presentation/main_navigation.dart';
 part 'router.g.dart';
 
 @riverpod
@@ -54,7 +55,7 @@ GoRouter router(RouterRef ref) {
       ),
       GoRoute(
         path: '/home',
-        builder: (context, state) => const HomeScreen(),
+        builder: (context, state) => const MainNavigation(),
       ),
       GoRoute(
         path: '/create-venture',

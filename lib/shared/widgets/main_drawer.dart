@@ -87,14 +87,6 @@ class MainDrawer extends ConsumerWidget {
                     context.push('/saved-ideas');
                   },
                 ),
-                ListTile(
-                  leading: const Icon(Icons.inbox_outlined, color: Color(0xFF1B3C73)),
-                  title: const Text('Inbox'),
-                  onTap: () {
-                    context.pop();
-                    context.push('/inbox');
-                  },
-                ),
                 // Divider to separate "App" from "Account"
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),

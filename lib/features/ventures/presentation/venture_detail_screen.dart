@@ -17,7 +17,7 @@ class _VentureDetailScreenState extends State<VentureDetailScreen> {
   bool isLoadingOwner = true;
   Map<String, dynamic>? ownerProfile;
   bool isMyVenture = false;
-  bool hasApplied = false; // Tracks if the current user has already applied
+  bool hasApplied = false; 
 
   @override
   void initState() {
@@ -51,7 +51,7 @@ class _VentureDetailScreenState extends State<VentureDetailScreen> {
     if (mounted) {
       setState(() {
         ownerProfile = data;
-        hasApplied = requestCheck != null; // Update button state
+        hasApplied = requestCheck != null; 
         isLoadingOwner = false;
       });
     }
@@ -105,13 +105,14 @@ class _VentureDetailScreenState extends State<VentureDetailScreen> {
                 'receiver_id': widget.venture.ownerId,
                 'expertise': expertiseController.text,
                 'contribution': contributionController.text,
+                'status': 'pending', // Key for Real-time tracking
               });
 
               if (mounted) {
-                setState(() => hasApplied = true); // Immediately update UI
+                setState(() => hasApplied = true); 
                 context.pop();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Request sent! Founder will review it."))
+                  const SnackBar(content: Text("Request sent! Check your 'Applied' tab."))
                 );
               }
             },
@@ -131,7 +132,7 @@ class _VentureDetailScreenState extends State<VentureDetailScreen> {
     
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Position marked as filled!")));
-      context.go('/home');
+      context.go('/');
     }
   }
 
